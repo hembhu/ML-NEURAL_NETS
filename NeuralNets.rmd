@@ -1,0 +1,241 @@
+---
+title: "NEURAL NETS IMPLEMENTATION"
+---
+Loading libraries:
+```{r, message=FALSE}
+library(neuralnet)
+library(readxl)
+library(caTools)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+```
+
+Problem-1: (Car Sales, Neural Networks)
+Load dataset.
+```{r}
+toyota <- read_excel('18 Toyota Corolla.xlsx', sheet=1)
+```
+
+Removing Id, Model, Cylinders and creating dummy variables for Fuel_type and Color:
+```{r}
+dummy_fuel <- data.frame(model.matrix(~toyota$Fuel_Type)[, c(2, 3)])
+names(dummy_fuel) <- c('Diesel', 'Petrol')
+toyota <- cbind(toyota, dummy_fuel)
+
+dummy_color <- data.frame(model.matrix(~toyota$Color)[, 2:10])
+names(dummy_color) <- c('Black', 'Blue' ,'Green', 'Grey', 'Red', 'Silver', 'Violet', 'White', 'Yellow')
+toyota <- cbind(toyota, dummy_color)
+
+toyota <- toyota[ ,-c(1,2,8,11,15)]
+
+#toyota$CC <- as.numeric(toyota$CC)
+```
+
+***A common function to return the mean and standard deviation of the columns***
+
+```{r}
+get_stats = function(df){
+        mean_df = df %>% summarise_all(list(name = ~mean(., na.rm = TRUE)))
+        std_df = df %>% summarise_all(list(name = ~sd(., na.rm = TRUE)))
+        stats_df = rbind(mean_df, std_df)
+        names(stats_df) = names(df)
+        rownames(stats_df) = c('Mean', 'Std Dev')
+        return(stats_df)
+}
+```
+
+***A common function to return the scaled data***
+
+```{r}
+get_scaled_data = function(stats, df){
+        new_df = data.frame(matrix(0, nrow = nrow(df), ncol = ncol(df)))
+        names(new_df) = names(df)
+        for(col in names(df)){
+                new_df[, col] = (df[, col] - stats[1, col]) / stats[2, col]
+        }
+        return(new_df)
+}
+```
+
+Partitioning the data into training and testing datasets
+```{r}
+set.seed(123)
+splitted_set <- sample.split(toyota$Price, SplitRatio = 0.75)
+toyota_train <- subset(toyota, subset = splitted_set)
+toyota_test <- subset(toyota, subset = !splitted_set)
+```
+
+Getting the stats for training data and scaling training and testing data.
+```{r}
+stats <- get_stats(toyota_train)
+toyota_train <- get_scaled_data(stats, toyota_train)
+toyota_test <- get_scaled_data(stats, toyota_test)
+```
+
+Separating predictors of train and test data:
+```{r}
+response <- c(which(colnames(toyota_train) == 'Price'))
+toyota_train_predictors <- toyota_train[,-response]
+toyota_test_predictors <- toyota_test[,-response]
+```
+
+
+(a) What happens to the RMS error (or Sum of Squares Error) for the training data as the value of threshold decreases?
+For this problem we will keep number of hidden nodes constant (15) and vary threshold, and see the effects on RMSE for training data.
+```{r}
+set.seed(200)
+
+toyota_nn <- function(threshold, hidden){
+toyota_nn <- neuralnet(Price~., data = toyota_train, linear.output = F, threshold=threshold, hidden = hidden, stepmax=10**6)
+}
+
+rms <- function(a, b){
+  return(sqrt(mean((a-b)^2)))
+}
+
+train_rms <- function(fit){
+  fit_train <- neuralnet::compute(fit, toyota_train_predictors)
+  fit_train_rms <- rms(fit_train$net.result, toyota_train$Price)
+  return(fit_train_rms)
+}
+
+fit_thr_1 <- toyota_nn(1, 15)
+fit_thr_0.1 <- toyota_nn(0.1, 15)
+fit_thr_0.05 <- toyota_nn(0.05, 15)
+fit_thr_0.01 <- toyota_nn(0.01, 15)
+fit_thr_0.005 <- toyota_nn(0.005, 15)
+fit_thr_0.001 <- toyota_nn(0.001, 15)
+fit_thr_0.0001 <- toyota_nn(0.0001, 15)
+
+rmse_train <- data.frame('Threshold'=c(1, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0001),
+                            'RMSE'=c(train_rms(fit_thr_1), train_rms(fit_thr_0.1), train_rms(fit_thr_0.05), train_rms(fit_thr_0.01), train_rms(fit_thr_0.005), train_rms(fit_thr_0.001), train_rms(fit_thr_0.0001)))
+
+cat(paste0("RMSE for training when threshold 1: ", train_rms(fit_thr_1), '\n', 
+           "RMSE for training when threshold 0.1: ", train_rms(fit_thr_0.1), '\n', 
+           "RMSE for training when threshold 0.05: ", train_rms(fit_thr_0.05), '\n', 
+           "RMSE for training when threshold 0.01: ", train_rms(fit_thr_0.01), '\n', 
+           "RMSE for training when threshold 0.005: ", train_rms(fit_thr_0.005), '\n', 
+           "RMSE for training when threshold 0.001: ", train_rms(fit_thr_0.001), '\n', 
+           "RMSE for training when threshold 0.0001: ", train_rms(fit_thr_0.0001)))
+
+ggplot(rmse_train) + geom_line(aes(x=Threshold, y=RMSE))
+```
+As we can see from the plot, decrease in threshold decreases RMS error for training dataset.
+
+
+(b) What happens to the RMS error Sum of Squares Error for the validation data?
+For this problem we will keep number of hidden nodes constant (15) and vary threshold, and see the effects on RMSE for test data.
+```{r}
+set.seed(00)
+
+test_rms <- function(fit){
+  fit_test <- neuralnet::compute(fit, toyota_test_predictors)
+  fit_test_rms <- rms(fit_test$net.result, toyota_test$Price)
+  return(fit_test_rms)
+}
+
+rmse_test <- data.frame('Threshold'=c(1, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0001),
+                        'RMSE'=c(test_rms(fit_thr_1), test_rms(fit_thr_0.1), test_rms(fit_thr_0.05),test_rms(fit_thr_0.01), test_rms(fit_thr_0.005), test_rms(fit_thr_0.001), test_rms(fit_thr_0.0001)))
+
+cat(paste0("RMSE for test data when threshold 1: ", test_rms(fit_thr_1), '\n', 
+           "RMSE for test data when threshold 0.1: ", test_rms(fit_thr_0.1), '\n', 
+           "RMSE for test data when threshold 0.05: ", test_rms(fit_thr_0.05), '\n', 
+           "RMSE for test data when threshold 0.01: ", test_rms(fit_thr_0.01), '\n', 
+           "RMSE for test data when threshold 0.005: ", test_rms(fit_thr_0.005), '\n', 
+           "RMSE for test data when threshold 0.001: ", test_rms(fit_thr_0.001), '\n', 
+           "RMSE for test data when threshold 0.0001: ", test_rms(fit_thr_0.0001)))
+
+ggplot(rmse_test) + geom_line(aes(x=Threshold, y=RMSE))
+```
+##Answer: We can see that as we decrease the value of threshold RMSE increases for validation data set. 
+
+
+(c) Conduct an experiment to assess the effect of changing the number of hidden layer nodes (default 1), e.g., 1,2,4,8.
+For this problem we will change number of hidden layer nodes and keep threshold constant (0.5) and check how model performs on test data.
+```{r}
+set.seed(200)
+
+fit_nd_1 <- toyota_nn(0.5, 1)
+test_rms(fit_nd_1)
+
+fit_nd_2 <- toyota_nn(0.5, 2)
+test_rms(fit_nd_2)
+
+fit_nd_4 <- toyota_nn(0.5, 4)
+test_rms(fit_nd_4)
+
+fit_nd_8 <- toyota_nn(0.5, 8)
+test_rms(fit_nd_8)
+
+rmse_test <- data.frame('Nodes'=c(1,2,4,8), 
+                        'Train'=c(train_rms(fit_nd_1), train_rms(fit_nd_2), train_rms(fit_nd_4),
+                            train_rms(fit_nd_8)),
+                        'Test'=c(test_rms(fit_nd_1), test_rms(fit_nd_2), test_rms(fit_nd_4),
+                            test_rms(fit_nd_8)))
+
+cat(paste0("RMSE for test data when hidden layer nodes 1: ", test_rms(fit_nd_1), '\n', 
+           "RMSE for test data when hidden layer nodes 2: ", test_rms(fit_nd_2), '\n', 
+           "RMSE for test data when hidden layer nodes 4: ", test_rms(fit_nd_4), '\n',
+           "RMSE for test data when hidden layer nodes 8: ", test_rms(fit_nd_8)))
+
+train_plot <- ggplot(rmse_test) + geom_line(aes(x=Nodes, y=Train))
+test_plot <- ggplot(rmse_test) + geom_line(aes(x=Nodes, y=Test))
+grid.arrange(train_plot, test_plot)
+```
+####From the plots we can see, increase in number of nodes causes decrease in RMSE for both train and test data.
+
+
+d) Conduct a similar experiment to assess the effect of changing the number of layers from 1 to 2 in the network.
+For this problem we will keep constant threshold of 0.5 and change number of hidden layers from 1 to 2 and check how model performs on test data. Each hidden layer will have 5 nodes.
+```{r}
+set.seed(200)
+
+fit_hl_1 <- toyota_nn(0.5, 5)
+
+fit_hl_2 <- toyota_nn(0.5, c(5,5))
+
+cat(paste0("RMSE for test data when number of layers 1: ", test_rms(fit_hl_1), '\n', 
+           "RMSE for test data when number of layers 2: ", test_rms(fit_hl_2)))
+```
+#####Increase in number of hidden layers, decreases RMSE for test data.
+
+
+(e) Study the effect of gradient descent step size (learningrate) on the training process and the network performance.
+For this problem we will keep number of hidden nodes (1) and threshold (0.5) constant and vary learning rate, and see the effects on RMSE for test data.
+```{r}
+set.seed(100)
+
+toyota_nnlr <- function(learningrate){
+toyota_nnlr <- neuralnet(Price~., data = toyota_train, linear.output = F, threshold=0.5, hidden = 1, algorithm='rprop+', err.fct='sse', stepmax=10**6, learningrate=learningrate)
+}
+
+fit_lr_1 <- toyota_nnlr(1)
+fit_lr_0.1 <- toyota_nnlr(0.1)
+fit_lr_0.05 <- toyota_nnlr(0.05)
+fit_lr_0.01 <- toyota_nnlr(0.01)
+fit_lr_0.005 <- toyota_nnlr(0.005)
+fit_lr_0.001 <- toyota_nnlr(0.001)
+fit_lr_0.0001 <- toyota_nnlr(0.0001)
+
+rmse_test <- data.frame('Learning_Rate'=c(1, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0001),
+                        'RMSE'=c(test_rms(fit_lr_1), test_rms(fit_lr_0.1), test_rms(fit_lr_0.05),
+                            test_rms(fit_lr_0.01), test_rms(fit_lr_0.005), test_rms(fit_lr_0.001), test_rms(fit_lr_0.0001)))
+
+cat(paste0("RMSE for training when learning rate is 1: ", test_rms(fit_lr_1), '\n', 
+           "RMSE for training when learning rate is 0.1: ", test_rms(fit_lr_0.1), '\n', 
+           "RMSE for training when learning rate is 0.05: ", test_rms(fit_lr_0.05), '\n', 
+           "RMSE for training when learning rate is 0.01: ", test_rms(fit_lr_0.01), '\n', 
+           "RMSE for training when learning rate is 0.005: ", test_rms(fit_lr_0.005), '\n', 
+           "RMSE for training when learning rate is 0.001: ", test_rms(fit_lr_0.001), '\n',
+           "RMSE for training when threshold 0.0001: ", test_rms(fit_lr_0.0001)))
+
+ggplot(rmse_test) + geom_line(aes(x=Learning_Rate, y=RMSE))
+```
+
+####Changing the learning rate doesn’t have effect on RMSE of train dataset but as we increase learning rate RSME value for validation dataset (test data) also increases.
+
+
+
+
+
